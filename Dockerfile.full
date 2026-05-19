@@ -1,0 +1,91 @@
+# BeautyOS-Hermes full image: wrapper + upstream Hermes runtime bundled.
+#
+# Two-stage build:
+#   1. fetch stage  — clones upstream at the pinned SHA from UPSTREAM_HERMES.txt
+#   2. runtime stage — copies upstream + bootstrap, installs uv + deps
+#
+# Build prerequisite: run ./scripts/sync-upstream.sh first locally so that
+# ./hermes/ exists. CI does this automatically. We don't `git clone` inside
+# the Dockerfile because:
+#   - keeps the image deterministic (same SHA every time)
+#   - avoids network round-trips when build cache hits
+#   - lets the pin file be the single source of truth
+#
+# This image is large (~1.5 GB) because upstream pulls Playwright + Node +
+# ffmpeg. Use the slim Dockerfile (default) if you only need the wrapper
+# protocol, not the full Hermes runtime.
+#
+# Build:
+#   ./scripts/sync-upstream.sh
+#   docker build -f Dockerfile.full -t beautyos-hermes:full .
+#
+# Run:
+#   docker run --rm --network <compose-network> \
+#     -e BEAUTYOS_BASE=http://web:3000 \
+#     -e BEAUTYOS_TOOL_BASE=http://tool-server:5001 \
+#     beautyos-hermes:full
+
+# ---------- stage 1: upstream payload ----------
+# We just need the upstream source tree. The pin file declares the version.
+FROM debian:12-slim AS upstream
+
+WORKDIR /payload
+
+# Expect ./hermes/ to be populated by scripts/sync-upstream.sh on the host
+# before docker build runs. Copying a directory is faster than git-clone-
+# in-the-image and avoids requiring git inside the build stage.
+COPY hermes/ /payload/hermes/
+COPY UPSTREAM_HERMES.txt /payload/UPSTREAM_HERMES.txt
+
+# Strip the upstream .git to keep the final image lean.
+RUN rm -rf /payload/hermes/.git
+
+# ---------- stage 2: runtime ----------
+FROM python:3.11-slim-bookworm AS runtime
+
+# Upstream Hermes runtime deps (matches its own Dockerfile, minus Playwright
+# browsers which we install on first use rather than at build time).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        curl \
+        ffmpeg \
+        git \
+        nodejs \
+        npm \
+        ripgrep \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv for fast deterministic Python installs (matches upstream).
+RUN pip install --no-cache-dir uv==0.4.20
+
+WORKDIR /app
+
+# Wrapper layer
+COPY bootstrap.py /app/bootstrap.py
+COPY config /app/config
+COPY UPSTREAM_HERMES.txt /app/UPSTREAM_HERMES.txt
+RUN pip install --no-cache-dir pyyaml==6.0.2
+
+# Upstream Hermes payload
+COPY --from=upstream /payload/hermes /opt/hermes
+
+# Install Hermes deps. The upstream uv.lock pins everything; we use uv pip
+# install with --system to keep things simple in a container.
+RUN cd /opt/hermes \
+    && uv pip install --system --no-cache --requirements pyproject.toml \
+    || (echo "[warn] uv pip install failed; falling back to bare pip install"; \
+        pip install --no-cache-dir .)
+
+ENV BEAUTYOS_BASE=http://web:3000 \
+    BEAUTYOS_TOOL_BASE=http://tool-server:5001 \
+    BEAUTYOS_AGENT_ID=hermes-bootstrap \
+    HERMES_PATH=/opt/hermes \
+    PYTHONUNBUFFERED=1
+
+ENTRYPOINT ["python3", "/app/bootstrap.py"]
+
+LABEL org.opencontainers.image.title="beautyos-hermes-full" \
+      org.opencontainers.image.description="BeautyOS Hermes wrapper + upstream Hermes runtime bundled" \
+      org.opencontainers.image.source="https://github.com/CHINGBOH/beautyos-hermes" \
+      org.opencontainers.image.licenses="MIT"

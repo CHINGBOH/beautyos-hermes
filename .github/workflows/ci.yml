@@ -1,0 +1,56 @@
+name: ci
+
+# Lint + sync verification + bootstrap smoke for the BeautyOS Hermes wrapper.
+# Heavy upstream-Hermes runtime is NOT installed here (Playwright/ffmpeg/Node
+# would blow up minutes per run). We only verify:
+#   1. bootstrap.py is lintable / parses
+#   2. scripts/sync-upstream.sh successfully checks out the pinned SHA
+#   3. config/hermes-profile.yaml has not drifted from ai-beautyos canonical
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install python tooling
+        run: pip install --quiet ruff pyyaml
+
+      - name: Ruff lint bootstrap.py
+        run: ruff check bootstrap.py
+
+      - name: Syntax check bootstrap.py
+        run: python -m py_compile bootstrap.py
+
+      - name: Shellcheck scripts
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          shellcheck scripts/*.sh
+
+      - name: Verify upstream pin is reachable
+        run: ./scripts/sync-upstream.sh
+
+      - name: Verify profile is in sync with ai-beautyos canonical
+        env:
+          # Use raw.githubusercontent.com fallback (no AI_BEAUTYOS_PATH in CI)
+          AI_BEAUTYOS_PATH: ""
+        run: ./scripts/check-profile-drift.sh

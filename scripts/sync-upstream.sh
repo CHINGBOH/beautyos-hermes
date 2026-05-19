@@ -17,7 +17,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-# shellcheck disable=SC1091
+# shellcheck disable=SC1090,SC1091
 source <(grep -E '^(UPSTREAM_REPO|UPSTREAM_SHA|UPSTREAM_VERSION)=' UPSTREAM_HERMES.txt)
 
 CHECKOUT="${HERMES_CHECKOUT:-$ROOT/hermes}"

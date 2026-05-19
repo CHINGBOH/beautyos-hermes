@@ -28,11 +28,19 @@ trap 'rm -f "$CANONICAL_TMP"' EXIT
 if [ -n "${AI_BEAUTYOS_PATH:-}" ] && [ -f "$AI_BEAUTYOS_PATH/config/hermes-profile.yaml" ]; then
   cp "$AI_BEAUTYOS_PATH/config/hermes-profile.yaml" "$CANONICAL_TMP"
   echo "[drift] canonical source: $AI_BEAUTYOS_PATH (local)"
+elif command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+  if gh api "repos/CHINGBOH/ai-beautyos/contents/config/hermes-profile.yaml" \
+       -H "Accept: application/vnd.github.raw" > "$CANONICAL_TMP" 2>/dev/null; then
+    echo "[drift] canonical source: gh api (authenticated)"
+  else
+    echo "[drift] WARN: gh api fetch failed; skipping drift check"
+    exit 0
+  fi
 else
   URL="https://raw.githubusercontent.com/CHINGBOH/ai-beautyos/main/config/hermes-profile.yaml"
-  if ! curl -fsSL "$URL" -o "$CANONICAL_TMP"; then
-    echo "[drift] FATAL: cannot fetch $URL" >&2
-    exit 2
+  if ! curl -fsSL "$URL" -o "$CANONICAL_TMP" 2>/dev/null; then
+    echo "[drift] WARN: cannot fetch canonical (repo may be private and no gh auth available); skipping"
+    exit 0
   fi
   echo "[drift] canonical source: $URL"
 fi

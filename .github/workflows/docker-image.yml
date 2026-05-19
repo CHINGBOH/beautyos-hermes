@@ -1,0 +1,105 @@
+name: build-and-publish-image
+
+# Builds the beautyos-hermes wrapper image and publishes it to GHCR.
+# Two variants:
+#   - :slim   thin wrapper only (bootstrap.py + config) — default Dockerfile
+#   - :full   wrapper + upstream Hermes runtime bundled — Dockerfile.full
+#
+# Tags produced:
+#   - ghcr.io/<owner>/beautyos-hermes:slim-latest     (main only)
+#   - ghcr.io/<owner>/beautyos-hermes:slim-sha-<n>    (every push)
+#   - ghcr.io/<owner>/beautyos-hermes:full-latest     (main only, if full builds)
+#   - ghcr.io/<owner>/beautyos-hermes:full-sha-<n>    (every push, if full builds)
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  slim:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute tags
+        id: tags
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          TAGS="ghcr.io/${OWNER}/beautyos-hermes:slim-sha-${SHORT_SHA}"
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            TAGS="${TAGS},ghcr.io/${OWNER}/beautyos-hermes:slim-latest"
+          fi
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+  full:
+    # Heavy build (clones upstream, installs uv + deps). Skip on PRs to save
+    # CI minutes; on main + tags we build but allow it to fail without
+    # breaking the slim publish.
+    if: github.event_name != 'pull_request'
+    needs: slim
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sync upstream Hermes at pinned SHA
+        run: ./scripts/sync-upstream.sh
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute tags
+        id: tags
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          TAGS="ghcr.io/${OWNER}/beautyos-hermes:full-sha-${SHORT_SHA}"
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            TAGS="${TAGS},ghcr.io/${OWNER}/beautyos-hermes:full-latest"
+          fi
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.full
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
