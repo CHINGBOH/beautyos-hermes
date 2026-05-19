@@ -22,6 +22,7 @@ RUN pip install --no-cache-dir pyyaml==6.0.2
 
 COPY bootstrap.py /app/bootstrap.py
 COPY config /app/config
+COPY UPSTREAM_HERMES.txt /app/UPSTREAM_HERMES.txt
 
 ENV BEAUTYOS_BASE=http://web:3000 \
     TOOL_BASE=http://tool-server:5001 \
