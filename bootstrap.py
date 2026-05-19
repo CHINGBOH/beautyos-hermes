@@ -163,6 +163,11 @@ def main() -> None:
 
     log("done", ok=True)
 
+    # 5.5) Install the BeautyOS skill into ~/.hermes/skills/ so the LLM
+    # learns how to call BeautyOS business tools. This is the demo-mode
+    # wiring (Phase-4a) — eventually we want a real MCP endpoint instead.
+    _install_beautyos_skill()
+
     # 6) Hand off to upstream Hermes if HERMES_PATH points at a synced
     # checkout (see scripts/sync-upstream.sh). bootstrap.py forwards any
     # CLI args it received to upstream's cli.py and chdirs into the
@@ -178,6 +183,29 @@ def main() -> None:
         os.execv(sys.executable, [sys.executable, cli, *sys.argv[1:]])
     else:
         log("handoff.skip", reason="HERMES_PATH not set; run scripts/sync-upstream.sh and re-run with HERMES_PATH=./hermes")
+
+
+def _install_beautyos_skill() -> None:
+    """Copy skills/beautyos/SKILL.md into the runtime ~/.hermes/skills/.
+
+    Hermes loads user skills from ``$HOME/.hermes/skills/<name>/SKILL.md``.
+    In our container HOME is set to /root and ~/.hermes is bind-mounted
+    from the host (so the skill survives + persists). We deliberately
+    overwrite each boot so a Dockerfile bump always lands the latest
+    version.
+    """
+    src = Path(__file__).resolve().parent / "skills" / "beautyos" / "SKILL.md"
+    if not src.exists():
+        log("skill.skip", reason="bundled SKILL.md not present", path=str(src))
+        return
+    dst_dir = Path(os.environ.get("HOME", "/root")) / ".hermes" / "skills" / "beautyos"
+    try:
+        dst_dir.mkdir(parents=True, exist_ok=True)
+        dst = dst_dir / "SKILL.md"
+        dst.write_bytes(src.read_bytes())
+        log("skill.installed", path=str(dst), bytes=dst.stat().st_size)
+    except Exception as e:  # noqa: BLE001 - best-effort
+        log("skill.error", err=repr(e))
 
 
 def _read_upstream_version() -> str:

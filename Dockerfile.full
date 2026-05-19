@@ -64,6 +64,7 @@ WORKDIR /app
 # Wrapper layer
 COPY bootstrap.py /app/bootstrap.py
 COPY config /app/config
+COPY skills /app/skills
 COPY UPSTREAM_HERMES.txt /app/UPSTREAM_HERMES.txt
 RUN pip install --no-cache-dir pyyaml==6.0.2
 
