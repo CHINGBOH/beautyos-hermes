@@ -1,0 +1,68 @@
+# BeautyOS x Hermes runtime profile.
+# Consumed by the beautyos-hermes wrapper at container start.
+# See docs/architecture/hermes-adapter.md for the protocol.
+
+schemaVersion: "1.0.0"
+
+# Where to reach BeautyOS from inside the Hermes container.
+# In the joint compose file (#29) this resolves via Docker DNS.
+#
+# Phase-3: /system/* lives on the Web/API service (`web`) and /tools/*
+# lives on the standalone tool-server (`tool-server`, internal-only).
+# `base` is the System Registry endpoint; `toolBase` is the MCP Tool
+# Server endpoint. Until BEAUTYOS_DISABLE_EMBEDDED_TOOL_SERVER=1 is
+# flipped on `web`, `toolBase` MAY equal `base` and /tools/* still
+# answers on the web port.
+beautyos:
+  base: "http://web:3000"
+  toolBase: "http://tool-server:5001"
+  endpoints:
+    manifest:    "/system/manifest"
+    tools:       "/system/tools"
+    permissions: "/system/permissions"
+    health:      "/system/health"
+    invoke:      "/tools/{name}/invoke"
+
+# Compatibility — Hermes refuses to start on a major mismatch.
+compatible:
+  beautyosManifest: ">=1.0.0 <2.0.0"
+
+# Which behaviour policy this Hermes instance runs under.
+# Reference is by *path inside ai-beautyos*; the joint compose mounts
+# config/ read-only into the Hermes container at /opt/beautyos/config.
+policy:
+  file: "config/policies/hermes/sales-assistant.yaml"
+
+# Identity headers Hermes attaches to every outbound call.
+# Values here are templates; the wrapper fills them at request time.
+identity:
+  tenantId: "${BEAUTYOS_TENANT_ID}"      # required at runtime
+  agentId: "hermes-sales-assistant-v1"
+  userIdHeader: "x-end-user-id"          # passthrough if upstream provides
+
+# Retry / backoff. Conservative defaults; Hermes overrides per tool
+# based on tool config (#25).
+retry:
+  manifestBootMaxAttempts: 10
+  manifestBootBaseDelayMs: 1000
+  toolMaxAttempts: 2
+  honourRetryAfter: true
+
+# Logging — structured json, with the trace id surfaced.
+logging:
+  format: json
+  level: info
+  fields:
+    - tenantId
+    - agentId
+    - requestId
+    - traceId
+    - tool
+    - outcome
+
+# Hard refusals — defence in depth on top of the behaviour policy.
+hardRefuse:
+  shellExec: true
+  rawSql: true
+  externalSend: true       # WeCom / SMS / email
+  fileSystemWrites: true   # except /tmp/* for ephemeral scratch

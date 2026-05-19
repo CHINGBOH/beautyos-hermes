@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.python-version
+
+# Hermes runtime artifacts
+hermes/
+.hermes-state/
+hermes-data/
+
+# Local config
+.env
+.env.local
+*.local.yaml
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
