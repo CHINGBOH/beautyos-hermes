@@ -1,0 +1,10 @@
+# Upstream Hermes pin.
+#
+# We track upstream by exact commit SHA. To roll forward, run
+# scripts/sync-upstream.sh which fetches + rebases + bumps this file.
+# CI fails the build if the local checkout doesn't match this SHA.
+
+UPSTREAM_REPO=https://github.com/NousResearch/hermes-agent.git
+UPSTREAM_SHA=683698742852ce0455f3a07b12c772c786d5a2ae
+UPSTREAM_VERSION=0.14.0
+PINNED_AT=2026-05-20

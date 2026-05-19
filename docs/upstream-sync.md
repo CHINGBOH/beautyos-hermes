@@ -2,70 +2,97 @@
 
 This repo is a **thin wrapper** around
 [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent).
-We track upstream via Git remote + rebase. We do **not** fork.
+We pin upstream by exact commit SHA in `UPSTREAM_HERMES.txt` and check
+it out into `./hermes/` (gitignored) on demand. We do **not** fork or
+vendor upstream source.
 
-## One-time setup
+## Pinning model
 
-```bash
-git remote add upstream https://github.com/NousResearch/hermes-agent.git
-git fetch upstream
+`UPSTREAM_HERMES.txt` is the single source of truth:
+
+```
+UPSTREAM_REPO=https://github.com/NousResearch/hermes-agent.git
+UPSTREAM_SHA=683698742852ce0455f3a07b12c772c786d5a2ae
+UPSTREAM_VERSION=0.14.0
 ```
 
-## Pulling upstream changes
+`scripts/sync-upstream.sh` reads this file, clones/fetches into
+`./hermes/`, and asserts `HEAD == UPSTREAM_SHA`. CI runs the same
+script to fail the build on drift.
+
+## Local development
 
 ```bash
-# 1. Sync local main with our origin
-git checkout main
-git pull origin main
+# 1. Sync upstream to the pinned SHA
+./scripts/sync-upstream.sh
 
-# 2. Create a sync branch
+# 2. Run the bootstrap with handoff enabled
+export BEAUTYOS_BASE=http://localhost:3000
+export BEAUTYOS_TOOL_BASE=http://localhost:5001
+export HERMES_PATH=$(pwd)/hermes
+python3 bootstrap.py [hermes-cli-args ...]
+```
+
+If all 8 smoke stages pass, `bootstrap.py` chdirs into `$HERMES_PATH`
+and `exec`s `python3 cli.py [args...]`. If `HERMES_PATH` is unset,
+bootstrap exits 0 after the smoke (scaffold / CI smoke mode).
+
+## Rolling upstream forward
+
+```bash
+# 1. From a clean state
+git checkout main && git pull
+cd hermes && git fetch && git log --oneline origin/main -20  # pick the new SHA
+cd ..
+
+# 2. Bump the pin
+sed -i "s/^UPSTREAM_SHA=.*/UPSTREAM_SHA=<new-sha>/" UPSTREAM_HERMES.txt
+sed -i "s/^UPSTREAM_VERSION=.*/UPSTREAM_VERSION=<new-version>/" UPSTREAM_HERMES.txt
+
+# 3. Re-sync + re-smoke
+./scripts/sync-upstream.sh
+# (run bootstrap.py against a live ai-beautyos compose stack)
+
+# 4. Commit + PR
 git checkout -b sync/upstream-$(date +%Y%m%d)
-
-# 3. Fetch + rebase against upstream main
-git fetch upstream
-git rebase upstream/main
-
-# 4. Resolve conflicts ONLY in our adapter files
-#    (bootstrap.py, config/hermes-profile.yaml, docs/, Dockerfile).
-#    NEVER edit upstream source files. If upstream changed the
-#    Hermes entrypoint or API surface, update bootstrap.py to match.
-
-# 5. Push the sync branch + open PR
-git push origin sync/upstream-$(date +%Y%m%d)
-gh pr create --base main --title "sync: upstream Hermes $(git rev-parse --short upstream/main)"
+git commit -am "sync: bump upstream Hermes to <new-sha> (<new-version>)"
+gh pr create --base main --title "sync: upstream Hermes <new-sha>"
 ```
 
 ## Build artefact
 
-The Dockerfile (Phase-3 step 4, not yet shipped) will:
-
-1. `FROM` an upstream-Hermes base image (or build from upstream tag)
-2. `COPY` bootstrap.py + config/ into a known path
-3. set `ENTRYPOINT ["python3", "/app/bootstrap.py"]`
-4. set `HERMES_ENTRYPOINT=/opt/hermes/cli.py` so bootstrap hands off
-   after the green check
+The Dockerfile currently ships **only the wrapper** (bootstrap.py +
+config/). For an image that bundles upstream Hermes too, run
+`scripts/sync-upstream.sh` first, then build with a Dockerfile that
+`COPY hermes/ /opt/hermes/` and sets `ENV HERMES_PATH=/opt/hermes`.
+We deliberately don't bake this into the default Dockerfile yet —
+upstream pulls Playwright + ffmpeg + Node and balloons the image
+past 2 GB; tracked as a follow-up after Phase-3 hardening.
 
 ## What we MAY modify
 
 - `bootstrap.py` — protocol implementation, our code
 - `config/hermes-profile.yaml` — BeautyOS-specific bootstrap config
-  (copy of `ai-beautyos/config/hermes-profile.yaml`)
-- `docs/` — our documentation
-- `Dockerfile` — our image recipe
-- `.github/workflows/` — our CI
+  (mirror of `ai-beautyos/config/hermes-profile.yaml`)
+- `UPSTREAM_HERMES.txt` — the pin
+- `docs/`, `Dockerfile`, `.github/workflows/`, `scripts/`
 
 ## What we MUST NOT modify
 
-- Anything that comes from upstream Hermes — file path, name, layout.
+- Anything under `./hermes/` — that's the synced upstream checkout.
+  Patches go upstream via NousResearch/hermes-agent.
 - The protocol shape defined in
   `ai-beautyos/docs/architecture/hermes-adapter.md` — that contract
   lives in the other repo. Coordinate via PR if it must change.
 
 ## Profile drift detection
 
-CI runs `scripts/check-profile-drift.sh` which compares our
+`scripts/check-profile-drift.sh` compares our
 `config/hermes-profile.yaml` against the canonical one in
-`ai-beautyos` (by git URL). On drift, the build fails until either:
+`ai-beautyos`. Sources:
 
-- the wrapper re-syncs the profile, OR
-- a coordinated PR in ai-beautyos updates the canonical first.
+- `$AI_BEAUTYOS_PATH/config/hermes-profile.yaml` (dev, preferred)
+- `raw.githubusercontent.com/CHINGBOH/ai-beautyos/main/...` (CI)
+
+On drift the script exits 1 and prints the diff. Either re-sync the
+profile here or land a coordinated PR in ai-beautyos first.

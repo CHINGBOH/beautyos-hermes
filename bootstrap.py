@@ -163,15 +163,31 @@ def main() -> None:
 
     log("done", ok=True)
 
-    # 6) Hand off to upstream Hermes if the runtime is present in the image.
-    # In the development scaffold we just exit 0; the real image will exec
-    # into the Hermes entrypoint here. See docs/upstream-sync.md.
-    hermes_entry = os.environ.get("HERMES_ENTRYPOINT")
-    if hermes_entry and os.path.exists(hermes_entry):
-        log("handoff", entrypoint=hermes_entry)
-        os.execv(sys.executable, [sys.executable, hermes_entry])
+    # 6) Hand off to upstream Hermes if HERMES_PATH points at a synced
+    # checkout (see scripts/sync-upstream.sh). bootstrap.py forwards any
+    # CLI args it received to upstream's cli.py and chdirs into the
+    # upstream directory first so its relative imports resolve.
+    hermes_path = os.environ.get("HERMES_PATH")
+    if hermes_path:
+        cli = os.path.join(hermes_path, "cli.py")
+        if not os.path.exists(cli):
+            log("handoff.skip", reason="HERMES_PATH set but cli.py missing", path=cli)
+            return
+        log("handoff", hermesPath=hermes_path, cli=cli, version=_read_upstream_version())
+        os.chdir(hermes_path)
+        os.execv(sys.executable, [sys.executable, cli, *sys.argv[1:]])
     else:
-        log("handoff.skip", reason="HERMES_ENTRYPOINT not set or missing")
+        log("handoff.skip", reason="HERMES_PATH not set; run scripts/sync-upstream.sh and re-run with HERMES_PATH=./hermes")
+
+
+def _read_upstream_version() -> str:
+    pin = Path(__file__).resolve().parent / "UPSTREAM_HERMES.txt"
+    if not pin.exists():
+        return "unknown"
+    for line in pin.read_text(encoding="utf-8").splitlines():
+        if line.startswith("UPSTREAM_VERSION="):
+            return line.split("=", 1)[1].strip()
+    return "unknown"
 
 
 if __name__ == "__main__":
